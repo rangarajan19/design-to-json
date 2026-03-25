@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Design to JSON</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 12px;
+      background: #1e1e1e;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: #2c2c2c;
+      border-bottom: 1px solid #3a3a3a;
+      flex-shrink: 0;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 13px;
+      color: #fff;
+    }
+
+    .logo-icon {
+      width: 20px;
+      height: 20px;
+      background: linear-gradient(135deg, #7c5cbf, #4f8ef7);
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 6px;
+    }
+
+    button {
+      border: none;
+      cursor: pointer;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: inherit;
+      font-weight: 500;
+      transition: background 0.15s, opacity 0.15s;
+    }
+
+    .btn-primary {
+      background: #7c5cbf;
+      color: #fff;
+      padding: 7px 14px;
+    }
+    .btn-primary:hover { background: #6a4dab; }
+
+    .btn-secondary {
+      background: #3a3a3a;
+      color: #ccc;
+      padding: 7px 12px;
+    }
+    .btn-secondary:hover { background: #444; }
+    .btn-secondary:disabled { opacity: 0.4; cursor: default; }
+
+    .btn-icon {
+      background: #3a3a3a;
+      color: #ccc;
+      padding: 6px 8px;
+      font-size: 11px;
+    }
+    .btn-icon:hover { background: #444; }
+
+    .status-bar {
+      padding: 8px 16px;
+      background: #252525;
+      border-bottom: 1px solid #333;
+      font-size: 11px;
+      color: #888;
+      flex-shrink: 0;
+      min-height: 32px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #555;
+      flex-shrink: 0;
+    }
+    .status-dot.success { background: #4caf50; }
+    .status-dot.error { background: #f44336; }
+    .status-dot.loading { background: #ff9800; animation: pulse 1s infinite; }
+
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    .search-bar {
+      display: flex;
+      align-items: center;
+      padding: 8px 16px;
+      background: #252525;
+      border-bottom: 1px solid #333;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .search-bar input {
+      flex: 1;
+      background: #1e1e1e;
+      border: 1px solid #3a3a3a;
+      border-radius: 5px;
+      padding: 5px 10px;
+      color: #e0e0e0;
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+    }
+    .search-bar input:focus { border-color: #7c5cbf; }
+    .search-bar input::placeholder { color: #555; }
+
+    .filter-tabs {
+      display: flex;
+      padding: 8px 16px 0;
+      background: #252525;
+      gap: 4px;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+      border-bottom: 1px solid #333;
+      padding-bottom: 8px;
+    }
+
+    .filter-tab {
+      background: #2c2c2c;
+      color: #888;
+      border: 1px solid #3a3a3a;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-tab.active { background: #7c5cbf; color: #fff; border-color: #7c5cbf; }
+    .filter-tab:hover:not(.active) { background: #333; color: #ccc; }
+
+    .json-container {
+      flex: 1;
+      overflow: auto;
+      padding: 12px 16px;
+      background: #1a1a1a;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #555;
+      gap: 12px;
+      text-align: center;
+    }
+
+    .empty-icon {
+      font-size: 36px;
+      opacity: 0.4;
+    }
+
+    .empty-state p { font-size: 12px; line-height: 1.5; max-width: 220px; }
+
+    pre {
+      font-family: 'JetBrains Mono', 'Fira Code', 'Menlo', monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* JSON syntax highlight */
+    .json-key    { color: #9cdcfe; }
+    .json-string { color: #ce9178; }
+    .json-number { color: #b5cea8; }
+    .json-bool   { color: #569cd6; }
+    .json-null   { color: #569cd6; }
+    .json-brace  { color: #ffd700; }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: #2c2c2c;
+      border-top: 1px solid #3a3a3a;
+      flex-shrink: 0;
+    }
+
+    .stats { font-size: 11px; color: #666; }
+    .stats span { color: #888; margin-left: 4px; }
+
+    .copy-feedback {
+      position: fixed;
+      bottom: 50px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #4caf50;
+      color: #fff;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 500;
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+    }
+    .copy-feedback.show { opacity: 1; }
+
+    .section-tag {
+      display: inline-block;
+      background: #2c2c2c;
+      border: 1px solid #3a3a3a;
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 10px;
+      color: #888;
+      margin-right: 4px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">{ }</div>
+    Design to JSON
+  </div>
+  <div class="toolbar">
+    <button class="btn-primary" id="extractBtn">Extract JSON</button>
+  </div>
+</header>
+
+<div class="status-bar" id="statusBar">
+  <div class="status-dot" id="statusDot"></div>
+  <span id="statusText">Select a frame and click Extract JSON</span>
+</div>
+
+<div class="search-bar" id="searchBar" style="display:none;">
+  <input type="text" id="searchInput" placeholder="Search keys or values..." />
+  <button class="btn-icon" id="clearSearch" title="Clear">✕</button>
+</div>
+
+<div class="filter-tabs" id="filterTabs" style="display:none;">
+  <button class="filter-tab active" data-filter="all">All</button>
+  <button class="filter-tab" data-filter="fills">Fills</button>
+  <button class="filter-tab" data-filter="text">Text</button>
+  <button class="filter-tab" data-filter="autoLayout">Auto Layout</button>
+  <button class="filter-tab" data-filter="effects">Effects</button>
+  <button class="filter-tab" data-filter="prototype">Prototype</button>
+  <button class="filter-tab" data-filter="component">Components</button>
+  <button class="filter-tab" data-filter="corners">Corners</button>
+</div>
+
+<div class="json-container" id="jsonContainer">
+  <div class="empty-state" id="emptyState">
+    <div class="empty-icon">⬡</div>
+    <p>Select a <strong>Frame</strong> in Figma and click <strong>Extract JSON</strong> to inspect its full design data.</p>
+  </div>
+  <pre id="jsonOutput" style="display:none;"></pre>
+</div>
+
+<div class="footer" id="footer" style="display:none;">
+  <div class="stats">Layers <span id="layerCount">—</span> &nbsp;|&nbsp; Size <span id="sizeInfo">—</span></div>
+  <div style="display:flex;gap:6px;">
+    <button class="btn-secondary" id="expandBtn">Expand all</button>
+    <button class="btn-secondary" id="copyBtn">Copy JSON</button>
+    <button class="btn-secondary" id="downloadBtn">Download</button>
+  </div>
+</div>
+
+<div class="copy-feedback" id="copyFeedback">Copied to clipboard!</div>
+
+<script>
+  let rawData = null;
+  let filteredData = null;
+  let expanded = true;
+
+  // ── Syntax highlighter ──────────────────────────────────────────────────
+  function syntaxHighlight(json) {
+    return json
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(
+        /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?|\[|\]|\{|\})/g,
+        (match) => {
+          if (/^"/.test(match)) {
+            if (/:$/.test(match)) return `<span class="json-key">${match}</span>`;
+            return `<span class="json-string">${match}</span>`;
+          }
+          if (/true|false/.test(match)) return `<span class="json-bool">${match}</span>`;
+          if (/null/.test(match)) return `<span class="json-null">${match}</span>`;
+          if (/[\[\]{}]/.test(match)) return `<span class="json-brace">${match}</span>`;
+          return `<span class="json-number">${match}</span>`;
+        }
+      );
+  }
+
+  // ── Count layers ────────────────────────────────────────────────────────
+  function countLayers(node, count = { n: 0 }) {
+    count.n++;
+    if (node.children) node.children.forEach((c) => countLayers(c, count));
+    return count.n;
+  }
+
+  // ── Filter by key ───────────────────────────────────────────────────────
+  function filterByKey(obj, key) {
+    if (typeof obj !== "object" || obj === null) return undefined;
+    const result = {};
+    let found = false;
+    for (const k of Object.keys(obj)) {
+      if (k === key && obj[k] !== null && obj[k] !== undefined) {
+        result[k] = obj[k];
+        found = true;
+      }
+      if (k === "children" && Array.isArray(obj[k])) {
+        const filteredChildren = obj[k].map((c) => filterByKey(c, key)).filter(Boolean);
+        if (filteredChildren.length > 0) {
+          result.name = obj.name;
+          result.type = obj.type;
+          result.id = obj.id;
+          result.children = filteredChildren;
+          found = true;
+        }
+      }
+    }
+    return found ? result : undefined;
+  }
+
+  // ── Search filter ───────────────────────────────────────────────────────
+  function searchInJson(obj, query) {
+    const lower = query.toLowerCase();
+    const str = JSON.stringify(obj).toLowerCase();
+    return str.includes(lower);
+  }
+
+  function renderOutput(data) {
+    const indent = expanded ? 2 : null;
+    const jsonStr = JSON.stringify(data, null, indent);
+    document.getElementById("jsonOutput").innerHTML = syntaxHighlight(jsonStr);
+  }
+
+  // ── Messages from plugin ────────────────────────────────────────────────
+  window.onmessage = (event) => {
+    const msg = event.data.pluginMessage;
+    if (!msg) return;
+
+    const dot = document.getElementById("statusDot");
+    const text = document.getElementById("statusText");
+
+    if (msg.type === "error") {
+      dot.className = "status-dot error";
+      text.textContent = msg.message;
+      return;
+    }
+
+    if (msg.type === "result") {
+      rawData = msg.data;
+      filteredData = rawData;
+
+      dot.className = "status-dot success";
+      text.textContent = `Extracted: ${rawData.name}  (${rawData.type})`;
+
+      document.getElementById("emptyState").style.display = "none";
+      document.getElementById("jsonOutput").style.display = "block";
+      document.getElementById("searchBar").style.display = "flex";
+      document.getElementById("filterTabs").style.display = "flex";
+      document.getElementById("footer").style.display = "flex";
+
+      const layers = countLayers(rawData);
+      document.getElementById("layerCount").textContent = layers;
+      document.getElementById("sizeInfo").textContent =
+        `${Math.round(rawData.width)} × ${Math.round(rawData.height)}`;
+
+      renderOutput(filteredData);
+
+      // reset filters
+      document.querySelectorAll(".filter-tab").forEach((t) => t.classList.remove("active"));
+      document.querySelector('[data-filter="all"]').classList.add("active");
+      document.getElementById("searchInput").value = "";
+    }
+  };
+
+  // ── Extract button ──────────────────────────────────────────────────────
+  document.getElementById("extractBtn").addEventListener("click", () => {
+    const dot = document.getElementById("statusDot");
+    const text = document.getElementById("statusText");
+    dot.className = "status-dot loading";
+    text.textContent = "Extracting...";
+    parent.postMessage({ pluginMessage: { type: "extract" } }, "*");
+  });
+
+  // ── Filter tabs ─────────────────────────────────────────────────────────
+  document.querySelectorAll(".filter-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".filter-tab").forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+
+      const filter = tab.dataset.filter;
+      if (filter === "all") {
+        filteredData = rawData;
+      } else {
+        filteredData = filterByKey(rawData, filter) || rawData;
+      }
+      renderOutput(filteredData);
+    });
+  });
+
+  // ── Search ──────────────────────────────────────────────────────────────
+  document.getElementById("searchInput").addEventListener("input", (e) => {
+    const query = e.target.value.trim();
+    if (!query) {
+      renderOutput(filteredData);
+      return;
+    }
+    // Highlight matches in rendered text
+    const indent = expanded ? 2 : null;
+    const jsonStr = JSON.stringify(filteredData, null, indent);
+    const highlighted = syntaxHighlight(jsonStr);
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const marked = highlighted.replace(
+      new RegExp(`(${escaped})`, "gi"),
+      '<mark style="background:#ff0;color:#000;border-radius:2px;">$1</mark>'
+    );
+    document.getElementById("jsonOutput").innerHTML = marked;
+  });
+
+  document.getElementById("clearSearch").addEventListener("click", () => {
+    document.getElementById("searchInput").value = "";
+    renderOutput(filteredData);
+  });
+
+  // ── Expand / Collapse ───────────────────────────────────────────────────
+  document.getElementById("expandBtn").addEventListener("click", () => {
+    expanded = !expanded;
+    document.getElementById("expandBtn").textContent = expanded ? "Collapse all" : "Expand all";
+    if (filteredData) renderOutput(filteredData);
+  });
+
+  // ── Copy ────────────────────────────────────────────────────────────────
+  document.getElementById("copyBtn").addEventListener("click", () => {
+    if (!filteredData) return;
+    const text = JSON.stringify(filteredData, null, 2);
+    navigator.clipboard.writeText(text).then(() => {
+      const fb = document.getElementById("copyFeedback");
+      fb.classList.add("show");
+      setTimeout(() => fb.classList.remove("show"), 1800);
+    });
+  });
+
+  // ── Download ────────────────────────────────────────────────────────────
+  document.getElementById("downloadBtn").addEventListener("click", () => {
+    if (!rawData) return;
+    const name = (rawData.name || "design").replace(/[^a-z0-9_\-]/gi, "_");
+    const blob = new Blob([JSON.stringify(rawData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+</script>
+</body>
+</html>
