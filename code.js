@@ -19,10 +19,40 @@ figma.ui.onmessage = function (msg) {
       figma.ui.postMessage({ type: "error", message: "Selected item is not a frame. Please select a frame." });
       return;
     }
-    var json = extractNode(node, true);
+
+    // Reset module state before each extraction
+    _styleIds = {};
+    _stats = { nodeCount: 0, maxDepth: 0 };
+
+    var frame = extractNode(node, true, 0);
+
+    // Top-level metadata
+    var exportedAt = new Date().toISOString();
+    var fileKey = null;
+    try { fileKey = figma.fileKey || null; } catch (e) {}
+    var userName = null;
+    try { userName = (figma.currentUser && figma.currentUser.name) ? figma.currentUser.name : null; } catch (e) {}
+
+    var meta = {
+      figmaFileKey: fileKey,
+      figmaFileName: figma.root ? figma.root.name : null,
+      exportedAt: exportedAt,
+      exportedBy: userName,
+      pageId: figma.currentPage ? figma.currentPage.id : null,
+      pageName: figma.currentPage ? figma.currentPage.name : null,
+      totalNodeCount: _stats.nodeCount,
+      deepestNestingLevel: _stats.maxDepth,
+    };
+
+    var output = {
+      meta: meta,
+      styles: buildStylesDictionary(),
+      variables: buildVariablesDictionary(),
+      frame: frame,
+    };
+
     // Serialize through JSON to strip any remaining Figma internal types
-    var safeJson = JSON.parse(JSON.stringify(json));
-    figma.ui.postMessage({ type: "result", data: safeJson });
+    figma.ui.postMessage({ type: "result", data: JSON.parse(JSON.stringify(output)) });
   }
 
   if (msg.type === "close") {
@@ -94,6 +124,13 @@ function effectToObject(effect) {
   }
   if (effect.type === "LAYER_BLUR" || effect.type === "BACKGROUND_BLUR") {
     return { type: base.type, visible: base.visible, radius: effect.radius };
+  }
+  if (effect.type === "GLASS") {
+    return {
+      type: base.type, visible: base.visible,
+      blurRadius: def(effect.blurRadius, null),
+      saturation: def(effect.saturation, null),
+    };
   }
   return base;
 }
@@ -266,6 +303,111 @@ function resolveStyleName(styleId) {
   }
 }
 
+// ─── Module state (reset per extraction) ─────────────────────────────────────
+
+var _styleIds = {};   // { styleId: true } — collected during tree walk
+var _stats = { nodeCount: 0, maxDepth: 0 };
+
+function trackStyle(styleId) {
+  if (styleId) _styleIds[styleId] = true;
+}
+
+// ─── Styles dictionary ────────────────────────────────────────────────────────
+
+function buildStylesDictionary() {
+  var ids = Object.keys(_styleIds);
+  if (ids.length === 0) return null;
+  var result = {};
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i];
+    try {
+      var style = figma.getStyleById(id);
+      if (!style) continue;
+      var entry = {
+        id: style.id,
+        name: style.name,
+        description: style.description || null,
+        type: style.type,
+      };
+      if (style.type === "PAINT" && style.paints) {
+        entry.fills = style.paints.map(paintToObject).filter(Boolean);
+      }
+      if (style.type === "TEXT") {
+        var fn = style.fontName || null;
+        entry.fontFamily = fn ? fn.family : null;
+        entry.fontStyle = fn ? fn.style : null;
+        entry.fontWeight = def(style.fontWeight, null);
+        entry.fontSize = def(style.fontSize, null);
+        entry.lineHeight = def(style.lineHeight, null);
+        entry.letterSpacing = def(style.letterSpacing, null);
+        entry.textCase = def(style.textCase, null);
+        entry.textDecoration = def(style.textDecoration, null);
+        entry.paragraphSpacing = def(style.paragraphSpacing, null);
+        entry.paragraphIndent = def(style.paragraphIndent, null);
+      }
+      if (style.type === "EFFECT" && style.effects) {
+        entry.effects = style.effects.map(effectToObject);
+      }
+      if (style.type === "GRID" && style.layoutGrids) {
+        entry.layoutGrids = style.layoutGrids.map(function (g) {
+          return {
+            pattern: g.pattern,
+            visible: def(g.visible, true),
+            hex: rgbaToHex(g.color.r, g.color.g, g.color.b),
+            rgba: toRgba(g.color.r, g.color.g, g.color.b, g.color.a),
+            alignment: def(g.alignment, null),
+            gutterSize: def(g.gutterSize, null),
+            count: def(g.count, null),
+            sectionSize: def(g.sectionSize, null),
+            offset: def(g.offset, null),
+          };
+        });
+      }
+      result[id] = entry;
+    } catch (e) {}
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+// ─── Variables dictionary ─────────────────────────────────────────────────────
+
+function buildVariablesDictionary() {
+  try {
+    if (!figma.variables) return null;
+    var collections = figma.variables.getLocalVariableCollections();
+    if (!collections || collections.length === 0) return null;
+    var result = {};
+    for (var i = 0; i < collections.length; i++) {
+      var col = collections[i];
+      var colEntry = {
+        id: col.id,
+        name: col.name,
+        modes: col.modes,
+        defaultModeId: col.defaultModeId,
+        variables: {},
+      };
+      for (var j = 0; j < col.variableIds.length; j++) {
+        try {
+          var v = figma.variables.getVariableById(col.variableIds[j]);
+          if (!v) continue;
+          colEntry.variables[v.name] = {
+            id: v.id,
+            name: v.name,
+            resolvedType: v.resolvedType,
+            scopes: v.scopes,
+            valuesByMode: v.valuesByMode,
+            description: v.description || null,
+          };
+        } catch (e) {}
+      }
+      result[col.name] = colEntry;
+    }
+    return Object.keys(result).length > 0 ? result : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function componentInfo(node) {
   if (node.type !== "INSTANCE") return null;
   try {
@@ -317,6 +459,19 @@ function componentInfo(node) {
       baseStyles.corners = mc;
     }
 
+    // resolvedStyles: effective styles = instance override if present, else master base
+    var instFills = (node.fills && node.fills !== figma.mixed && node.fills.length > 0)
+      ? node.fills.map(paintToObject).filter(Boolean) : null;
+    var instStrokes = strokesInfo(node);
+    var instEffects = (node.effects && node.effects.length > 0) ? node.effects.map(effectToObject) : null;
+    var instCorners = cornerInfo(node);
+    var resolvedStyles = {
+      fills: instFills || baseStyles.fills || null,
+      strokes: instStrokes || baseStyles.strokes || null,
+      effects: instEffects || baseStyles.effects || null,
+      corners: instCorners || baseStyles.corners || null,
+    };
+
     return {
       mainComponentId: main.id,
       mainComponentName: main.name,
@@ -325,6 +480,7 @@ function componentInfo(node) {
       componentProperties: componentProps,
       overrides: overrides,
       baseStyles: Object.keys(baseStyles).length > 0 ? baseStyles : null,
+      resolvedStyles: resolvedStyles,
     };
   } catch (e) {
     return null;
@@ -361,8 +517,13 @@ function exportSettings(node) {
 
 // ─── Core extractor ──────────────────────────────────────────────────────────
 
-function extractNode(node, isRoot) {
+function extractNode(node, isRoot, depth) {
   if (isRoot === undefined) isRoot = false;
+  if (depth === undefined) depth = 0;
+
+  // Track stats
+  _stats.nodeCount++;
+  if (depth > _stats.maxDepth) _stats.maxDepth = depth;
 
   var pos = sizeAndPosition(node);
   var obj = {
@@ -374,6 +535,7 @@ function extractNode(node, isRoot) {
     opacity: "opacity" in node ? node.opacity : 1,
     blendMode: "blendMode" in node ? node.blendMode : null,
     isMask: "isMask" in node ? node.isMask : false,
+    maskType: ("isMask" in node && node.isMask && "maskType" in node) ? node.maskType : null,
     x: pos.x,
     y: pos.y,
     width: pos.width,
@@ -383,10 +545,24 @@ function extractNode(node, isRoot) {
     constraints: pos.constraints,
   };
 
+  // Absolute position (relative to page/canvas)
+  try {
+    if (node.absoluteBoundingBox) {
+      obj.absolutePosition = {
+        x: parseFloat(node.absoluteBoundingBox.x.toFixed(2)),
+        y: parseFloat(node.absoluteBoundingBox.y.toFixed(2)),
+      };
+    }
+  } catch (e) {}
+
   // Fills
   if ("fills" in node && node.fills !== figma.mixed && node.fills.length > 0) {
     obj.fills = node.fills.map(paintToObject).filter(Boolean);
-    if (node.fillStyleId) obj.fillStyleName = resolveStyleName(node.fillStyleId);
+    if (node.fillStyleId) {
+      obj.fillStyleId = node.fillStyleId;
+      obj.fillStyleName = resolveStyleName(node.fillStyleId);
+      trackStyle(node.fillStyleId);
+    }
   }
 
   // Strokes
@@ -404,12 +580,20 @@ function extractNode(node, isRoot) {
     obj.strokeLeftWeight = strokes.strokeLeftWeight;
     obj.strokeRightWeight = strokes.strokeRightWeight;
   }
-  if (node.strokeStyleId) obj.strokeStyleName = resolveStyleName(node.strokeStyleId);
+  if (node.strokeStyleId) {
+    obj.strokeStyleId = node.strokeStyleId;
+    obj.strokeStyleName = resolveStyleName(node.strokeStyleId);
+    trackStyle(node.strokeStyleId);
+  }
 
   // Effects
   if ("effects" in node && node.effects.length > 0) {
     obj.effects = node.effects.map(effectToObject);
-    if (node.effectStyleId) obj.effectStyleName = resolveStyleName(node.effectStyleId);
+    if (node.effectStyleId) {
+      obj.effectStyleId = node.effectStyleId;
+      obj.effectStyleName = resolveStyleName(node.effectStyleId);
+      trackStyle(node.effectStyleId);
+    }
   }
 
   // Corners
@@ -428,9 +612,12 @@ function extractNode(node, isRoot) {
 
   // Text
   var text = textStyleInfo(node);
-  if (text) obj.text = text;
+  if (text) {
+    obj.text = text;
+    if (text.textStyleId) trackStyle(text.textStyleId);
+  }
 
-  // Prototype
+  // Prototype / reactions
   var proto = prototypeInfo(node);
   if (proto) obj.prototype = proto;
 
@@ -445,11 +632,11 @@ function extractNode(node, isRoot) {
   // Layout Grids
   if ("layoutGrids" in node && node.layoutGrids.length > 0) {
     obj.layoutGrids = node.layoutGrids.map(function (g) {
-      var gc = rgbaToHex(g.color.r, g.color.g, g.color.b, g.color.a);
       return {
         pattern: g.pattern,
         visible: def(g.visible, true),
-        color: gc,
+        hex: rgbaToHex(g.color.r, g.color.g, g.color.b),
+        rgba: toRgba(g.color.r, g.color.g, g.color.b, g.color.a),
         alignment: def(g.alignment, null),
         gutterSize: def(g.gutterSize, null),
         count: def(g.count, null),
@@ -457,7 +644,11 @@ function extractNode(node, isRoot) {
         offset: def(g.offset, null),
       };
     });
-    if (node.gridStyleId) obj.gridStyleName = resolveStyleName(node.gridStyleId);
+    if (node.gridStyleId) {
+      obj.gridStyleId = node.gridStyleId;
+      obj.gridStyleName = resolveStyleName(node.gridStyleId);
+      trackStyle(node.gridStyleId);
+    }
   }
 
   // Clip content
@@ -466,12 +657,54 @@ function extractNode(node, isRoot) {
   // Background
   if ("backgrounds" in node && node.backgrounds.length > 0) {
     obj.backgrounds = node.backgrounds.map(paintToObject).filter(Boolean);
-    if (node.backgroundStyleId) obj.backgroundStyleName = resolveStyleName(node.backgroundStyleId);
+    if (node.backgroundStyleId) {
+      obj.backgroundStyleId = node.backgroundStyleId;
+      obj.backgroundStyleName = resolveStyleName(node.backgroundStyleId);
+      trackStyle(node.backgroundStyleId);
+    }
   }
+
+  // Vector paths
+  if (node.type === "VECTOR") {
+    try {
+      if (node.vectorPaths && node.vectorPaths.length > 0) {
+        obj.vectorPaths = node.vectorPaths.map(function (p) {
+          return { windingRule: p.windingRule, data: p.data };
+        });
+      }
+    } catch (e) {}
+  }
+
+  // Boolean operation type
+  if (node.type === "BOOLEAN_OPERATION" && "booleanOperation" in node) {
+    obj.booleanOperation = node.booleanOperation;
+  }
+
+  // Plugin data (from this plugin)
+  try {
+    var pdKeys = node.getPluginDataKeys ? node.getPluginDataKeys() : [];
+    if (pdKeys && pdKeys.length > 0) {
+      obj.pluginData = {};
+      for (var k = 0; k < pdKeys.length; k++) {
+        obj.pluginData[pdKeys[k]] = node.getPluginData(pdKeys[k]);
+      }
+    }
+  } catch (e) {}
+
+  // Documentation links
+  try {
+    if (node.documentationLinks && node.documentationLinks.length > 0) {
+      obj.documentationLinks = node.documentationLinks.map(function (l) {
+        return { uri: l.uri };
+      });
+    }
+  } catch (e) {}
 
   // Children (recursive)
   if ("children" in node && node.children.length > 0) {
-    obj.children = node.children.map(function (child) { return extractNode(child, false); });
+    obj.children = node.children.map(function (child) {
+      return extractNode(child, false, depth + 1);
+    });
   }
 
   return obj;

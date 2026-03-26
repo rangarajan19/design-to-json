@@ -1,5 +1,7 @@
 # Design to JSON — Figma Plugin
 
+**Version:** 1.0.2 — 2026-03-26
+
 A Figma plugin that extracts complete design data from a selected frame into a structured, readable JSON format. Useful for design handoff, documentation, design system audits, and feeding design tokens into code.
 
 ---
@@ -20,19 +22,24 @@ A Figma plugin that extracts complete design data from a selected frame into a s
 
 | Category | Data |
 |---|---|
-| **Layer** | id, name, type, visible, locked, opacity, blend mode, mask |
-| **Size & Position** | x, y, width, height, rotation, relativeTransform, constraints |
-| **Fills** | SOLID (hex + rgba + opacity + visible flag), linear/radial/angular gradients (stops with hex + rgba), image fills — linked style name included |
-| **Strokes** | color, weight, alignment, dash pattern, cap, join, per-side weights — linked style name included |
-| **Effects** | Drop shadow, inner shadow (hex + rgba), layer blur, background blur — linked style name included |
+| **Layer** | id, name, type, visible, locked, opacity, blendMode, isMask, maskType |
+| **Size & Position** | x/y (relative to parent), absolutePosition (relative to page), width, height, rotation, relativeTransform, constraints |
+| **Fills** | SOLID (hex + rgba + opacity + visible), gradients (stops with hex + rgba), image fills — styleId + resolved name |
+| **Strokes** | color, weight, per-side weights, align, cap, join, dashes, miterLimit — styleId + resolved name |
+| **Effects** | Drop/inner shadow (hex + rgba, offset, spread, blendMode), layer/background blur, glass — styleId + resolved name |
 | **Corners** | Uniform or per-corner radius, corner smoothing |
-| **Auto Layout** | Direction, primary/counter axis sizing & alignment, padding (top/bottom/left/right), item spacing, counter axis spacing, wrap, layout positioning |
-| **Layout Child** | align, grow, positioning, min/max width/height per child layer |
-| **Text** | Font family, style, weight (numeric), size, letter spacing, line height, text case, decoration, alignment, truncation, paragraph spacing, linked text style name — full styled segment breakdown (with per-segment fontWeight + textStyleName) |
-| **Prototype** | Triggers (click, hover, key, etc.), actions (navigate, open overlay, URL), transition type, duration, easing, direction |
-| **Components** | Main component id & name, component set id & name, componentProperties (variant/boolean/text/swap), overrides list, baseStyles (inherited master styles for non-overridden fields) |
-| **Layout Grids** | Pattern, color, alignment, gutter, count, section size, offset — linked style name included |
-| **Export Settings** | Format (PNG/SVG/PDF), suffix, scale constraint |
+| **Auto Layout** | Direction, primary/counter axis sizing & alignment, padding (all sides), item spacing, wrap, layout positioning |
+| **Layout Child** | align, grow, positioning, min/max width/height per child |
+| **Text** | Family, style, weight (numeric), size, spacing, line height, case, decoration, alignment, truncation, paragraph spacing, styleId + resolved name — full mixed-style segment breakdown |
+| **Prototype** | Triggers, actions, transition type/duration/easing, destination |
+| **Components** | mainComponentId/Name, componentSetId/Name, componentProperties, overrides, baseStyles, resolvedStyles (merged master + instance) |
+| **Layout Grids** | Pattern, hex + rgba color, alignment, gutter, count, section size, offset — styleId + resolved name |
+| **Vector Nodes** | vectorPaths array (SVG path data + windingRule per path) |
+| **Boolean Nodes** | booleanOperation (UNION / INTERSECT / SUBTRACT / EXCLUDE) |
+| **Metadata per node** | pluginData, documentationLinks, exportSettings |
+| **Styles (top-level)** | Resolved dictionary of all styles referenced in the frame — full paint/text/effect/grid properties per entry |
+| **Variables (top-level)** | All variable collections with modes, per-variable resolvedType, scopes, valuesByMode |
+| **Export Metadata** | figmaFileKey, figmaFileName, exportedAt, exportedBy, pageId/Name, totalNodeCount, deepestNestingLevel |
 | **Children** | Fully recursive — all nested layers at every depth |
 
 ---
