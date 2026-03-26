@@ -2,7 +2,6 @@
   "name": "Design to JSON",
   "id": "design-to-json",
   "api": "1.0.0",
-  "version": "1.0.2",
   "main": "code.js",
   "ui": "ui.html",
   "editorType": [

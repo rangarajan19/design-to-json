@@ -1,6 +1,6 @@
 # Design to JSON — Figma Plugin
 
-**Version:** 1.0.2 — 2026-03-26
+**Version:** 1.0.3 — 2026-03-26
 
 A Figma plugin that extracts complete design data from a selected frame into a structured, readable JSON format. Useful for design handoff, documentation, design system audits, and feeding design tokens into code.
 
