@@ -3,9 +3,9 @@
 
 figma.showUI(__html__, { width: 480, height: 600, title: "Design to JSON" });
 
-figma.ui.onmessage = (msg) => {
+figma.ui.onmessage = function (msg) {
   if (msg.type === "extract") {
-    const selection = figma.currentPage.selection;
+    var selection = figma.currentPage.selection;
     if (selection.length === 0) {
       figma.ui.postMessage({ type: "error", message: "No frame selected. Please select a frame." });
       return;
@@ -14,13 +14,15 @@ figma.ui.onmessage = (msg) => {
       figma.ui.postMessage({ type: "error", message: "Please select only one frame." });
       return;
     }
-    const node = selection[0];
+    var node = selection[0];
     if (node.type !== "FRAME" && node.type !== "COMPONENT" && node.type !== "COMPONENT_SET") {
       figma.ui.postMessage({ type: "error", message: "Selected item is not a frame. Please select a frame." });
       return;
     }
-    const json = extractNode(node, true);
-    figma.ui.postMessage({ type: "result", data: json });
+    var json = extractNode(node, true);
+    // Serialize through JSON to strip any remaining Figma internal types
+    var safeJson = JSON.parse(JSON.stringify(json));
+    figma.ui.postMessage({ type: "result", data: safeJson });
   }
 
   if (msg.type === "close") {
@@ -28,53 +30,70 @@ figma.ui.onmessage = (msg) => {
   }
 };
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function rgbaToHex(r, g, b, a) {
-  const toHex = (v) => Math.round(v * 255).toString(16).padStart(2, "0");
-  const hex = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-  return a !== undefined && a < 1 ? { hex, opacity: parseFloat(a.toFixed(3)) } : { hex };
+function def(val, fallback) {
+  return (val !== undefined && val !== null) ? val : fallback;
+}
+
+function rgbaToHex(r, g, b) {
+  function toHex(v) { return Math.round(v * 255).toString(16).padStart(2, "0"); }
+  return "#" + toHex(r) + toHex(g) + toHex(b);
+}
+
+function toRgba(r, g, b, a) {
+  return {
+    r: Math.round(r * 255),
+    g: Math.round(g * 255),
+    b: Math.round(b * 255),
+    a: parseFloat((a !== undefined ? a : 1).toFixed(3)),
+  };
 }
 
 function paintToObject(paint) {
-  if (!paint.visible && paint.visible !== undefined) return null;
-  const base = { type: paint.type, blendMode: paint.blendMode, opacity: paint.opacity ?? 1 };
+  var visible = (paint.visible !== undefined) ? paint.visible : true;
+  var base = { type: paint.type, visible: visible, blendMode: paint.blendMode, opacity: def(paint.opacity, 1) };
 
   if (paint.type === "SOLID") {
-    const { hex, opacity } = rgbaToHex(paint.color.r, paint.color.g, paint.color.b, paint.color.a);
-    return { ...base, hex, colorOpacity: opacity };
+    var hex = rgbaToHex(paint.color.r, paint.color.g, paint.color.b);
+    var rgba = toRgba(paint.color.r, paint.color.g, paint.color.b, paint.color.a);
+    return { type: base.type, visible: visible, blendMode: base.blendMode, opacity: base.opacity, hex: hex, rgba: rgba };
   }
   if (paint.type === "GRADIENT_LINEAR" || paint.type === "GRADIENT_RADIAL" ||
       paint.type === "GRADIENT_ANGULAR" || paint.type === "GRADIENT_DIAMOND") {
     return {
-      ...base,
-      gradientStops: paint.gradientStops.map((s) => ({
-        position: parseFloat(s.position.toFixed(3)),
-        ...rgbaToHex(s.color.r, s.color.g, s.color.b, s.color.a),
-      })),
+      type: base.type, visible: visible, blendMode: base.blendMode, opacity: base.opacity,
+      gradientStops: paint.gradientStops.map(function (s) {
+        return {
+          position: parseFloat(s.position.toFixed(3)),
+          hex: rgbaToHex(s.color.r, s.color.g, s.color.b),
+          rgba: toRgba(s.color.r, s.color.g, s.color.b, s.color.a),
+        };
+      }),
       gradientTransform: paint.gradientTransform,
     };
   }
   if (paint.type === "IMAGE") {
-    return { ...base, scaleMode: paint.scaleMode, imageHash: paint.imageHash };
+    return { type: base.type, visible: visible, blendMode: base.blendMode, opacity: base.opacity, scaleMode: paint.scaleMode, imageHash: paint.imageHash };
   }
   return base;
 }
 
 function effectToObject(effect) {
-  const base = { type: effect.type, visible: effect.visible ?? true };
+  var base = { type: effect.type, visible: def(effect.visible, true) };
   if (effect.type === "DROP_SHADOW" || effect.type === "INNER_SHADOW") {
     return {
-      ...base,
-      ...rgbaToHex(effect.color.r, effect.color.g, effect.color.b, effect.color.a),
+      type: base.type, visible: base.visible,
+      hex: rgbaToHex(effect.color.r, effect.color.g, effect.color.b),
+      rgba: toRgba(effect.color.r, effect.color.g, effect.color.b, effect.color.a),
       offset: { x: effect.offset.x, y: effect.offset.y },
       radius: effect.radius,
-      spread: effect.spread ?? 0,
+      spread: def(effect.spread, 0),
       blendMode: effect.blendMode,
     };
   }
   if (effect.type === "LAYER_BLUR" || effect.type === "BACKGROUND_BLUR") {
-    return { ...base, radius: effect.radius };
+    return { type: base.type, visible: base.visible, radius: effect.radius };
   }
   return base;
 }
@@ -83,24 +102,22 @@ function strokesInfo(node) {
   if (!node.strokes || node.strokes.length === 0) return null;
   return {
     strokes: node.strokes.map(paintToObject).filter(Boolean),
-    strokeWeight: node.strokeWeight ?? null,
-    strokeAlign: node.strokeAlign ?? null,
-    strokeDashes: node.dashPattern && node.dashPattern.length > 0 ? node.dashPattern : null,
-    strokeCap: node.strokeCap ?? null,
-    strokeJoin: node.strokeJoin ?? null,
-    strokeMiterLimit: node.strokeMiterLimit ?? null,
-    strokeTopWeight: node.strokeTopWeight ?? null,
-    strokeBottomWeight: node.strokeBottomWeight ?? null,
-    strokeLeftWeight: node.strokeLeftWeight ?? null,
-    strokeRightWeight: node.strokeRightWeight ?? null,
+    strokeWeight: def(node.strokeWeight, null),
+    strokeAlign: def(node.strokeAlign, null),
+    strokeDashes: (node.dashPattern && node.dashPattern.length > 0) ? node.dashPattern : null,
+    strokeCap: def(node.strokeCap, null),
+    strokeJoin: def(node.strokeJoin, null),
+    strokeMiterLimit: def(node.strokeMiterLimit, null),
+    strokeTopWeight: def(node.strokeTopWeight, null),
+    strokeBottomWeight: def(node.strokeBottomWeight, null),
+    strokeLeftWeight: def(node.strokeLeftWeight, null),
+    strokeRightWeight: def(node.strokeRightWeight, null),
   };
 }
 
 function cornerInfo(node) {
-  const result = {};
-  if ("cornerRadius" in node && node.cornerRadius !== figma.mixed) {
-    result.cornerRadius = node.cornerRadius;
-  }
+  var result = {};
+  if ("cornerRadius" in node && node.cornerRadius !== figma.mixed) result.cornerRadius = node.cornerRadius;
   if ("topLeftRadius" in node) result.topLeftRadius = node.topLeftRadius;
   if ("topRightRadius" in node) result.topRightRadius = node.topRightRadius;
   if ("bottomLeftRadius" in node) result.bottomLeftRadius = node.bottomLeftRadius;
@@ -117,21 +134,21 @@ function autoLayoutInfo(node) {
     counterAxisSizingMode: node.counterAxisSizingMode,
     primaryAxisAlignItems: node.primaryAxisAlignItems,
     counterAxisAlignItems: node.counterAxisAlignItems,
-    counterAxisAlignContent: node.counterAxisAlignContent ?? null,
+    counterAxisAlignContent: def(node.counterAxisAlignContent, null),
     paddingTop: node.paddingTop,
     paddingBottom: node.paddingBottom,
     paddingLeft: node.paddingLeft,
     paddingRight: node.paddingRight,
     itemSpacing: node.itemSpacing,
-    counterAxisSpacing: node.counterAxisSpacing ?? null,
-    layoutWrap: node.layoutWrap ?? null,
-    strokesIncludedInLayout: node.strokesIncludedInLayout ?? false,
-    itemReverseZIndex: node.itemReverseZIndex ?? false,
+    counterAxisSpacing: def(node.counterAxisSpacing, null),
+    layoutWrap: def(node.layoutWrap, null),
+    strokesIncludedInLayout: def(node.strokesIncludedInLayout, false),
+    itemReverseZIndex: def(node.itemReverseZIndex, false),
   };
 }
 
 function layoutChildInfo(node) {
-  const result = {};
+  var result = {};
   if ("layoutAlign" in node) result.layoutAlign = node.layoutAlign;
   if ("layoutGrow" in node) result.layoutGrow = node.layoutGrow;
   if ("layoutPositioning" in node) result.layoutPositioning = node.layoutPositioning;
@@ -145,48 +162,55 @@ function layoutChildInfo(node) {
 function textStyleInfo(node) {
   if (node.type !== "TEXT") return null;
 
-  const getSegments = () => {
+  function getSegments() {
     try {
-      const segments = node.getStyledTextSegments([
+      var segments = node.getStyledTextSegments([
         "fontName", "fontSize", "fontWeight", "letterSpacing", "lineHeight",
         "textDecoration", "textCase", "fills", "textStyleId", "hyperlink",
         "listOptions", "indentation",
       ]);
-      return segments.map((seg) => ({
-        characters: seg.characters,
-        start: seg.start,
-        end: seg.end,
-        fontFamily: seg.fontName?.family,
-        fontStyle: seg.fontName?.style,
-        fontSize: seg.fontSize,
-        letterSpacing: seg.letterSpacing,
-        lineHeight: seg.lineHeight,
-        textDecoration: seg.textDecoration,
-        textCase: seg.textCase,
-        fills: seg.fills?.map(paintToObject).filter(Boolean),
-        textStyleId: seg.textStyleId || null,
-        hyperlink: seg.hyperlink || null,
-        listOptions: seg.listOptions || null,
-        indentation: seg.indentation,
-      }));
+      return segments.map(function (seg) {
+        return {
+          characters: seg.characters,
+          start: seg.start,
+          end: seg.end,
+          fontFamily: seg.fontName ? seg.fontName.family : null,
+          fontStyle: seg.fontName ? seg.fontName.style : null,
+          fontWeight: seg.fontWeight || null,
+          fontSize: seg.fontSize,
+          letterSpacing: seg.letterSpacing,
+          lineHeight: seg.lineHeight,
+          textDecoration: seg.textDecoration,
+          textCase: seg.textCase,
+          fills: seg.fills ? seg.fills.map(paintToObject).filter(Boolean) : null,
+          textStyleId: seg.textStyleId || null,
+          textStyleName: seg.textStyleId ? resolveStyleName(seg.textStyleId) : null,
+          hyperlink: seg.hyperlink || null,
+          listOptions: seg.listOptions || null,
+          indentation: seg.indentation,
+        };
+      });
     } catch (e) {
       return null;
     }
-  };
+  }
 
+  var fontName = node.fontName !== figma.mixed ? node.fontName : null;
+  var textStyleId = node.textStyleId || null;
   return {
     characters: node.characters,
     textAlignHorizontal: node.textAlignHorizontal,
     textAlignVertical: node.textAlignVertical,
     textAutoResize: node.textAutoResize,
-    textTruncation: node.textTruncation ?? null,
-    maxLines: node.maxLines ?? null,
+    textTruncation: def(node.textTruncation, null),
+    maxLines: def(node.maxLines, null),
     paragraphIndent: node.paragraphIndent,
     paragraphSpacing: node.paragraphSpacing,
-    textStyleId: node.textStyleId || null,
-    // top-level font (may be mixed)
-    fontFamily: node.fontName !== figma.mixed ? node.fontName?.family : "MIXED",
-    fontStyle: node.fontName !== figma.mixed ? node.fontName?.style : "MIXED",
+    textStyleId: textStyleId,
+    textStyleName: textStyleId ? resolveStyleName(textStyleId) : null,
+    fontFamily: fontName ? fontName.family : "MIXED",
+    fontStyle: fontName ? fontName.style : "MIXED",
+    fontWeight: node.fontWeight !== figma.mixed ? node.fontWeight : "MIXED",
     fontSize: node.fontSize !== figma.mixed ? node.fontSize : "MIXED",
     letterSpacing: node.letterSpacing !== figma.mixed ? node.letterSpacing : "MIXED",
     lineHeight: node.lineHeight !== figma.mixed ? node.lineHeight : "MIXED",
@@ -197,13 +221,13 @@ function textStyleInfo(node) {
 }
 
 function prototypeInfo(node) {
-  const reactions = node.reactions;
+  var reactions = node.reactions;
   if (!reactions || reactions.length === 0) return null;
 
-  return reactions.map((r) => {
-    const trigger = r.trigger;
-    const action = r.action;
-    const result = { trigger: null, action: null };
+  return reactions.map(function (r) {
+    var trigger = r.trigger;
+    var action = r.action;
+    var result = { trigger: null, action: null };
 
     if (trigger) {
       result.trigger = { type: trigger.type };
@@ -221,7 +245,7 @@ function prototypeInfo(node) {
           type: action.transition.type,
           duration: action.transition.duration,
           easing: action.transition.easing,
-          direction: action.transition.direction ?? null,
+          direction: def(action.transition.direction, null),
         };
       }
       if (action.url) result.action.url = action.url;
@@ -235,7 +259,7 @@ function prototypeInfo(node) {
 function resolveStyleName(styleId) {
   if (!styleId) return null;
   try {
-    const style = figma.getStyleById(styleId);
+    var style = figma.getStyleById(styleId);
     return style ? style.name : null;
   } catch (e) {
     return null;
@@ -245,22 +269,75 @@ function resolveStyleName(styleId) {
 function componentInfo(node) {
   if (node.type !== "INSTANCE") return null;
   try {
-    const main = node.mainComponent;
+    var main = node.mainComponent;
     if (!main) return { mainComponentId: null };
+    var parentNode = main.parent;
+    var isSet = parentNode && parentNode.type === "COMPONENT_SET";
+
+    // Component properties (variant, boolean, text, instance swap)
+    var componentProps = null;
+    try {
+      if (node.componentProperties) {
+        componentProps = {};
+        var cpKeys = Object.keys(node.componentProperties);
+        for (var i = 0; i < cpKeys.length; i++) {
+          componentProps[cpKeys[i]] = node.componentProperties[cpKeys[i]];
+        }
+      }
+    } catch (e) {}
+
+    // Overrides list
+    var overrides = node.overrides
+      ? node.overrides.map(function (o) { return { id: o.id, overriddenFields: o.overriddenFields }; })
+      : [];
+
+    // Fields overridden specifically on the root instance node
+    var rootOverridden = [];
+    for (var j = 0; j < overrides.length; j++) {
+      if (overrides[j].id === node.id) { rootOverridden = overrides[j].overriddenFields; break; }
+    }
+
+    // Inline base styles from master for fields the instance does NOT override
+    var baseStyles = {};
+    if (main.fills && main.fills !== figma.mixed && main.fills.length > 0 &&
+        rootOverridden.indexOf("fills") === -1) {
+      baseStyles.fills = main.fills.map(paintToObject).filter(Boolean);
+    }
+    if (main.strokes && main.strokes.length > 0 &&
+        rootOverridden.indexOf("strokes") === -1) {
+      var si = strokesInfo(main);
+      if (si) baseStyles.strokes = si;
+    }
+    if (main.effects && main.effects.length > 0 &&
+        rootOverridden.indexOf("effects") === -1) {
+      baseStyles.effects = main.effects.map(effectToObject);
+    }
+    var mc = cornerInfo(main);
+    if (mc && rootOverridden.indexOf("cornerRadius") === -1) {
+      baseStyles.corners = mc;
+    }
+
     return {
       mainComponentId: main.id,
       mainComponentName: main.name,
-      componentSetName: main.parent?.type === "COMPONENT_SET" ? main.parent.name : null,
-      overrides: node.overrides
-        ? node.overrides.map((o) => ({
-            id: o.id,
-            overriddenFields: o.overriddenFields,
-          }))
-        : [],
+      componentSetId: isSet ? parentNode.id : null,
+      componentSetName: isSet ? parentNode.name : null,
+      componentProperties: componentProps,
+      overrides: overrides,
+      baseStyles: Object.keys(baseStyles).length > 0 ? baseStyles : null,
     };
   } catch (e) {
     return null;
   }
+}
+
+function serializeTransform(t) {
+  // relativeTransform is a Figma internal type — convert to plain nested array
+  if (!t) return null;
+  return [
+    [t[0][0], t[0][1], t[0][2]],
+    [t[1][0], t[1][1], t[1][2]],
+  ];
 }
 
 function sizeAndPosition(node) {
@@ -270,33 +347,40 @@ function sizeAndPosition(node) {
     width: parseFloat(node.width.toFixed(2)),
     height: parseFloat(node.height.toFixed(2)),
     rotation: node.rotation ? parseFloat(node.rotation.toFixed(2)) : 0,
-    relativeTransform: node.relativeTransform,
+    relativeTransform: serializeTransform(node.relativeTransform),
     constraints: "constraints" in node ? node.constraints : null,
   };
 }
 
 function exportSettings(node) {
   if (!node.exportSettings || node.exportSettings.length === 0) return null;
-  return node.exportSettings.map((s) => ({
-    format: s.format,
-    suffix: s.suffix,
-    constraint: s.constraint,
-  }));
+  return node.exportSettings.map(function (s) {
+    return { format: s.format, suffix: s.suffix, constraint: s.constraint };
+  });
 }
 
-// ─── Core extractor ─────────────────────────────────────────────────────────
+// ─── Core extractor ──────────────────────────────────────────────────────────
 
-function extractNode(node, isRoot = false) {
-  const obj = {
+function extractNode(node, isRoot) {
+  if (isRoot === undefined) isRoot = false;
+
+  var pos = sizeAndPosition(node);
+  var obj = {
     id: node.id,
     name: node.name,
     type: node.type,
-    visible: node.visible ?? true,
-    locked: node.locked ?? false,
+    visible: def(node.visible, true),
+    locked: def(node.locked, false),
     opacity: "opacity" in node ? node.opacity : 1,
     blendMode: "blendMode" in node ? node.blendMode : null,
     isMask: "isMask" in node ? node.isMask : false,
-    ...sizeAndPosition(node),
+    x: pos.x,
+    y: pos.y,
+    width: pos.width,
+    height: pos.height,
+    rotation: pos.rotation,
+    relativeTransform: pos.relativeTransform,
+    constraints: pos.constraints,
   };
 
   // Fills
@@ -306,8 +390,20 @@ function extractNode(node, isRoot = false) {
   }
 
   // Strokes
-  const strokes = strokesInfo(node);
-  if (strokes) Object.assign(obj, strokes);
+  var strokes = strokesInfo(node);
+  if (strokes) {
+    obj.strokes = strokes.strokes;
+    obj.strokeWeight = strokes.strokeWeight;
+    obj.strokeAlign = strokes.strokeAlign;
+    obj.strokeDashes = strokes.strokeDashes;
+    obj.strokeCap = strokes.strokeCap;
+    obj.strokeJoin = strokes.strokeJoin;
+    obj.strokeMiterLimit = strokes.strokeMiterLimit;
+    obj.strokeTopWeight = strokes.strokeTopWeight;
+    obj.strokeBottomWeight = strokes.strokeBottomWeight;
+    obj.strokeLeftWeight = strokes.strokeLeftWeight;
+    obj.strokeRightWeight = strokes.strokeRightWeight;
+  }
   if (node.strokeStyleId) obj.strokeStyleName = resolveStyleName(node.strokeStyleId);
 
   // Effects
@@ -317,47 +413,50 @@ function extractNode(node, isRoot = false) {
   }
 
   // Corners
-  const corners = cornerInfo(node);
+  var corners = cornerInfo(node);
   if (corners) obj.corners = corners;
 
   // Auto Layout
-  const al = autoLayoutInfo(node);
+  var al = autoLayoutInfo(node);
   if (al) obj.autoLayout = al;
 
   // Layout child props
   if (!isRoot) {
-    const lc = layoutChildInfo(node);
+    var lc = layoutChildInfo(node);
     if (lc) obj.layoutChild = lc;
   }
 
   // Text
-  const text = textStyleInfo(node);
+  var text = textStyleInfo(node);
   if (text) obj.text = text;
 
   // Prototype
-  const proto = prototypeInfo(node);
+  var proto = prototypeInfo(node);
   if (proto) obj.prototype = proto;
 
   // Component instance
-  const comp = componentInfo(node);
+  var comp = componentInfo(node);
   if (comp) obj.component = comp;
 
   // Export settings
-  const exp = exportSettings(node);
+  var exp = exportSettings(node);
   if (exp) obj.exportSettings = exp;
 
-  // Grid / Guide styles (frames)
+  // Layout Grids
   if ("layoutGrids" in node && node.layoutGrids.length > 0) {
-    obj.layoutGrids = node.layoutGrids.map((g) => ({
-      pattern: g.pattern,
-      visible: g.visible ?? true,
-      color: rgbaToHex(g.color.r, g.color.g, g.color.b, g.color.a),
-      alignment: g.alignment ?? null,
-      gutterSize: g.gutterSize ?? null,
-      count: g.count ?? null,
-      sectionSize: g.sectionSize ?? null,
-      offset: g.offset ?? null,
-    }));
+    obj.layoutGrids = node.layoutGrids.map(function (g) {
+      var gc = rgbaToHex(g.color.r, g.color.g, g.color.b, g.color.a);
+      return {
+        pattern: g.pattern,
+        visible: def(g.visible, true),
+        color: gc,
+        alignment: def(g.alignment, null),
+        gutterSize: def(g.gutterSize, null),
+        count: def(g.count, null),
+        sectionSize: def(g.sectionSize, null),
+        offset: def(g.offset, null),
+      };
+    });
     if (node.gridStyleId) obj.gridStyleName = resolveStyleName(node.gridStyleId);
   }
 
@@ -372,7 +471,7 @@ function extractNode(node, isRoot = false) {
 
   // Children (recursive)
   if ("children" in node && node.children.length > 0) {
-    obj.children = node.children.map((child) => extractNode(child, false));
+    obj.children = node.children.map(function (child) { return extractNode(child, false); });
   }
 
   return obj;

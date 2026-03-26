@@ -22,15 +22,15 @@ A Figma plugin that extracts complete design data from a selected frame into a s
 |---|---|
 | **Layer** | id, name, type, visible, locked, opacity, blend mode, mask |
 | **Size & Position** | x, y, width, height, rotation, relativeTransform, constraints |
-| **Fills** | SOLID (hex + opacity), linear/radial/angular gradients, image fills — linked style name included |
+| **Fills** | SOLID (hex + rgba + opacity + visible flag), linear/radial/angular gradients (stops with hex + rgba), image fills — linked style name included |
 | **Strokes** | color, weight, alignment, dash pattern, cap, join, per-side weights — linked style name included |
-| **Effects** | Drop shadow, inner shadow, layer blur, background blur — linked style name included |
+| **Effects** | Drop shadow, inner shadow (hex + rgba), layer blur, background blur — linked style name included |
 | **Corners** | Uniform or per-corner radius, corner smoothing |
 | **Auto Layout** | Direction, primary/counter axis sizing & alignment, padding (top/bottom/left/right), item spacing, counter axis spacing, wrap, layout positioning |
 | **Layout Child** | align, grow, positioning, min/max width/height per child layer |
-| **Text** | Font family, style, size, letter spacing, line height, text case, decoration, alignment, truncation, paragraph spacing — full styled segment breakdown for mixed-style text |
+| **Text** | Font family, style, weight (numeric), size, letter spacing, line height, text case, decoration, alignment, truncation, paragraph spacing, linked text style name — full styled segment breakdown (with per-segment fontWeight + textStyleName) |
 | **Prototype** | Triggers (click, hover, key, etc.), actions (navigate, open overlay, URL), transition type, duration, easing, direction |
-| **Components** | Main component id & name, component set name, overrides list |
+| **Components** | Main component id & name, component set id & name, componentProperties (variant/boolean/text/swap), overrides list, baseStyles (inherited master styles for non-overridden fields) |
 | **Layout Grids** | Pattern, color, alignment, gutter, count, section size, offset — linked style name included |
 | **Export Settings** | Format (PNG/SVG/PDF), suffix, scale constraint |
 | **Children** | Fully recursive — all nested layers at every depth |
@@ -106,5 +106,18 @@ design to json/
 ## Tech
 
 - Figma Plugin API 1.0.0
-- Vanilla JS (no build step required)
+- Vanilla JS — written in ES5-compatible syntax to match Figma's sandbox constraints (no `??`, `?.`, or arrow functions in callbacks)
+- No build step required
 - Zero external dependencies
+
+---
+
+## Known Constraints
+
+Figma's plugin sandbox runs a restricted JavaScript environment. The plugin avoids:
+- `??` nullish coalescing operator
+- `?.` optional chaining
+- Default function parameters
+- Arrow functions inside `.map()` / `.filter()` callbacks
+
+All null/undefined checks are handled with explicit guards for full sandbox compatibility.
